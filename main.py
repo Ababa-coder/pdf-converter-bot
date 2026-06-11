@@ -104,7 +104,7 @@ async def process_callback(call: types.CallbackQuery):
             img = Image.open(input_path).convert("RGB")
             img.save(out_path, "PDF")
 
-              elif call.data == "office_to_pdf":
+            elif call.data == "office_to_pdf":
             # Фиксированное имя для выходного файла, чтобы ничего не терялось
             out_path = f"result_{user_id}.pdf"
             
