@@ -3,10 +3,8 @@ import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from docx import Document
 from PIL import Image
 from fpdf import FPDF
-from pypdf import PdfReader
 
 # ===== НАСТРОЙКА ТОКЕНА =====
 TOKEN = os.getenv("BOT_TOKEN")
