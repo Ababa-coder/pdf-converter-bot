@@ -116,6 +116,7 @@ async def process_callback(call: types.CallbackQuery):
             base_name = os.path.splitext(input_path)[0]
             out_path = f"{base_name}.pdf"
 
+
         # Отправка готового файла
         if os.path.exists(out_path):
             with open(out_path, "rb") as f:
