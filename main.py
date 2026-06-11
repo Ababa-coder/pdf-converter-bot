@@ -29,7 +29,7 @@ def safe_remove(filepath):
 async def start_command(message: types.Message):
     await message.reply(
         "👋 **Привет! Я профессиональный конвертер.**\n\n"
-        "Отправь мне документ Word (`.docx`), текстовый файл или фото, "
+        "Отправь мне документ Word (`.docx`), текстовый файл или photo, "
         "и я преобразую его в PDF **с идеальным сохранением всего форматирования!**",
         parse_mode="Markdown"
     )
@@ -98,33 +98,35 @@ async def process_callback(call: types.CallbackQuery):
     input_path = user_files[user_id]["path"]
     await call.message.edit_text("⏳ Идет идеальная конвертация через LibreOffice Core. Подождите...")
 
+    out_path = None
+
     try:
+        # --- КОНВЕРТАЦИЯ ФОТО ---
         if call.data == "photo_to_pdf":
             out_path = f"converted_{user_id}.pdf"
             img = Image.open(input_path).convert("RGB")
             img.save(out_path, "PDF")
 
-            elif call.data == "office_to_pdf":
-                # Фиксированное имя для выходного файла, чтобы ничего не терялось
-                out_path = f"result_{user_id}.pdf"
+        # --- КОНВЕРТАЦИЯ ДОКУМЕНТОВ ЧЕРЕЗ LIBREOFFICE ---
+        elif call.data == "office_to_pdf":
+            out_path = f"result_{user_id}.pdf"
             
-                # Запускаем оригинальную утилиту LibreOffice
-                cmd = [
-                    "libreoffice", "--headless", "--convert-to", "pdf", 
-                    input_path, "--outdir", "."
-                ]
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            # Запускаем утилиту LibreOffice для точной конвертации
+            cmd = [
+                "libreoffice", "--headless", "--convert-to", "pdf", 
+                input_path, "--outdir", "."
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             
-                # Находим созданный LibreOffice файл и переименовываем его в наш out_path
-                orig_base = os.path.splitext(os.path.basename(input_path))[0]
-                generated_file = f"{orig_base}.pdf"
+            # Находим созданный файл и переименовываем его в out_path
+            orig_base = os.path.splitext(os.path.basename(input_path))[0]
+            generated_file = f"{orig_base}.pdf"
             
-                if os.path.exists(generated_file):
-                    os.rename(generated_file, out_path)
+            if os.path.exists(generated_file):
+                os.rename(generated_file, out_path)
 
-
-        # Отправка готового файла
-        if os.path.exists(out_path):
+        # --- ОТПРАВКА ГОТОВОГО ФАЙЛА ПОЛЬЗОВАТЕЛЮ ---
+        if out_path and os.path.exists(out_path):
             with open(out_path, "rb") as f:
                 await call.message.reply_document(f, caption="✨ Готово! Файл сохранен с исходным форматированием.")
             safe_remove(out_path)
