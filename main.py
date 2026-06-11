@@ -104,17 +104,23 @@ async def process_callback(call: types.CallbackQuery):
             img = Image.open(input_path).convert("RGB")
             img.save(out_path, "PDF")
 
-        elif call.data == "office_to_pdf":
-            # Запускаем оригинальную утилиту LibreOffice для точной конвертации
+              elif call.data == "office_to_pdf":
+            # Фиксированное имя для выходного файла, чтобы ничего не терялось
+            out_path = f"result_{user_id}.pdf"
+            
+            # Запускаем оригинальную утилиту LibreOffice
             cmd = [
                 "libreoffice", "--headless", "--convert-to", "pdf", 
                 input_path, "--outdir", "."
             ]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             
-            # Получаем имя сгенерированного файла
-            base_name = os.path.splitext(input_path)[0]
-            out_path = f"{base_name}.pdf"
+            # Находим созданный LibreOffice файл и переименовываем его в наш out_path
+            orig_base = os.path.splitext(os.path.basename(input_path))[0]
+            generated_file = f"{orig_base}.pdf"
+            
+            if os.path.exists(generated_file):
+                os.rename(generated_file, out_path)
 
 
         # Отправка готового файла
