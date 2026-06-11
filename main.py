@@ -27,6 +27,7 @@ def create_base_pdf():
     pdf.set_font("DejaVu", size=12)
     return pdf
 
+# Стирание временного файла с диска
 def safe_remove(filepath):
     if filepath and os.path.exists(filepath):
         try:
@@ -82,8 +83,8 @@ async def handle_document(message: types.Message):
     
     if file_name.endswith(".docx"):
         keyboard.add(
-            InlineKeyboardButton("📄 DOCX ➡️ PDF", callback_data="docx_to_pdf"),
-            InlineKeyboardButton("📝 DOCX ➡️ TXT (Текст)", callback_data="docx_to_txt")
+            InlineKeyboardButton("📄 DOCX ➡️ PDF (с картинками)", callback_data="docx_to_pdf"),
+            InlineKeyboardButton("📝 DOCX ➡️ TXT (Только текст)", callback_data="docx_to_txt")
         )
     elif file_name.endswith(".pdf"):
         keyboard.add(
@@ -103,7 +104,7 @@ async def handle_document(message: types.Message):
     keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"))
     await message.reply(f"Файл `{doc.file_name}` загружен. Что нужно сделать?", reply_markup=keyboard, parse_mode="Markdown")
 
-# ===== ОБРАБОТЧИК КНОПОК =====
+# ===== ОБРАБОТЧИК КНОПОК (CALLBACK) =====
 @dp.callback_query_handler(lambda call: True)
 async def process_callback(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -125,20 +126,69 @@ async def process_callback(call: types.CallbackQuery):
     
     await call.message.edit_text("⏳ Конвертирую файл, пожалуйста, подождите...")
 
+    # Массив для хранения временных картинок, вытащенных из docx
+    extracted_images = []
+
     try:
+        # --- ФОТО В PDF ---
         if call.data == "photo_to_pdf":
             out_path = "converted_image.pdf"
             img = Image.open(input_path).convert("RGB")
             img.save(out_path, "PDF")
             
+        # --- DOCX В PDF (С ПОДДЕРЖКОЙ КАРТИНОК И ТЕКСТА) ---
         elif call.data == "docx_to_pdf":
             out_path = "converted_docx.pdf"
             doc = Document(input_path)
-            text = "\n".join([p.text for p in doc.paragraphs])
             pdf = create_base_pdf()
-            pdf.multi_cell(0, 10, text)
+            
+            # Построчно перебираем структуру документа Word
+            for paragraph in doc.paragraphs:
+                # Проверяем наличие встроенных картинок внутри текущего абзаца
+                inline_shapes = paragraph._element.xpath('.//w:drawing')
+                if inline_shapes:
+                    for shape in inline_shapes:
+                        blips = shape.xpath('.//a:blip/@r:embed')
+                        if blips:
+                            rId = blips[0]
+                            # Извлекаем файл картинки в байтах из архива docx
+                            image_part = doc.part.related_parts[rId]
+                            image_bytes = image_part._blob
+                            
+                            # Временно пишем картинку на диск
+                            img_name = f"temp_extract_{user_id}_{len(extracted_images)}.png"
+                            with open(img_name, "wb") as f_img:
+                                f_img.write(image_bytes)
+                            extracted_images.append(img_name)
+                            
+                            try:
+                                with Image.open(img_name) as temp_pil:
+                                    w, h = temp_pil.size
+                                
+                                # Рассчитываем ширину картинки под формат A4 (макс 180мм)
+                                max_width = 180
+                                ratio = max_width / float(w)
+                                new_h = int(float(h) * ratio)
+                                
+                                # Проверяем, влезет ли картинка по высоте, если нет — переносим на новую страницу
+                                if pdf.get_y() + new_h > 260:
+                                    pdf.add_page()
+                                    
+                                pdf.image(img_name, w=max_width)
+                                pdf.ln(5)
+                            except Exception as img_err:
+                                logging.error(f"Не удалось отрисовать картинку в PDF: {img_err}")
+
+                # Если в абзаце присутствует текст, печатаем его вслед за картинкой
+                if paragraph.text.strip():
+                    if pdf.get_y() > 260:
+                        pdf.add_page()
+                    pdf.multi_cell(0, 10, paragraph.text)
+                    pdf.ln(2)
+
             pdf.output(out_path)
             
+        # --- DOCX В TXT ---
         elif call.data == "docx_to_txt":
             out_path = "converted_docx.txt"
             doc = Document(input_path)
@@ -146,6 +196,7 @@ async def process_callback(call: types.CallbackQuery):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(text)
 
+        # --- TXT В PDF ---
         elif call.data == "txt_to_pdf":
             out_path = "converted_txt.pdf"
             with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -154,6 +205,7 @@ async def process_callback(call: types.CallbackQuery):
             pdf.multi_cell(0, 10, text)
             pdf.output(out_path)
 
+        # --- TXT В DOCX ---
         elif call.data == "txt_to_docx":
             out_path = "converted_txt.docx"
             with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -162,6 +214,7 @@ async def process_callback(call: types.CallbackQuery):
             doc.add_paragraph(text)
             doc.save(out_path)
 
+        # --- PDF В TXT ---
         elif call.data == "pdf_to_txt":
             out_path = "extracted_text.txt"
             reader = PdfReader(input_path)
@@ -169,8 +222,9 @@ async def process_callback(call: types.CallbackQuery):
             for page in reader.pages:
                 text += page.extract_text() or ""
             with open(out_path, "w", encoding="utf-8") as f:
-                f.write(text if text.strip() else "Не удалось извлечь текст из PDF.")
+                f.write(text if text.strip() else "Не удалось извлечь печатный текст из PDF.")
 
+        # --- PDF В DOCX ---
         elif call.data == "pdf_to_docx":
             out_path = "converted_pdf.docx"
             reader = PdfReader(input_path)
@@ -180,20 +234,25 @@ async def process_callback(call: types.CallbackQuery):
                 doc.add_paragraph(text)
             doc.save(out_path)
 
+        # Отправка готового файла пользователю в чат
         with open(out_path, "rb") as f:
-            await call.message.reply_document(f, caption="✨ Результат конвертации:")
+            await call.message.reply_document(f, caption="✨ Готово! Ваш файл успешно конвертирован.")
             
         await call.message.delete()
         safe_remove(out_path)
 
     except Exception as e:
-        logging.error(f"Ошибка при конвертации: {e}")
-        await call.message.edit_text("❌ Произошла ошибка при обработке файла.")
+        logging.error(f"Критическая ошибка конвертации: {e}")
+        await call.message.edit_text("❌ Извините, произошла ошибка обработки структуры этого файла.")
 
     finally:
+                # Полная чистка диска от всех типов временных файлов
         safe_remove(input_path)
+        for img_path in extracted_images:
+            safe_remove(img_path)
         if user_id in user_files:
             del user_files[user_id]
 
+# ===== RUN =====
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
