@@ -5,7 +5,7 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from docx import Document
 from PIL import Image
-from fpdf2 import FPDF
+from fpdf import FPDF
 from pypdf import PdfReader
 
 # ===== НАСТРОЙКА ТОКЕНА =====
@@ -17,8 +17,6 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 logging.basicConfig(level=logging.INFO)
 
-# Хранилище для путей файлов, чтобы знать, что конвертировать после нажатия кнопки
-# В продакшене лучше использовать БД или FSM, но для простоты используем словарь
 user_files = {}
 
 # Функция для создания PDF с поддержкой русского языка
@@ -29,7 +27,6 @@ def create_base_pdf():
     pdf.set_font("DejaVu", size=12)
     return pdf
 
-# Стирание временного файла
 def safe_remove(filepath):
     if filepath and os.path.exists(filepath):
         try:
@@ -60,7 +57,6 @@ async def handle_photo(message: types.Message):
         
     user_files[message.from_user.id] = {"path": input_path, "type": "photo"}
     
-    # Кнопки для фото
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
         InlineKeyboardButton("🖼️ Конвертировать в PDF", callback_data="photo_to_pdf"),
@@ -107,7 +103,7 @@ async def handle_document(message: types.Message):
     keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"))
     await message.reply(f"Файл `{doc.file_name}` загружен. Что нужно сделать?", reply_markup=keyboard, parse_mode="Markdown")
 
-# ===== ОБРАБОТЧИК НАЖАТИЙ НА КНОПКИ (CALLBACK) =====
+# ===== ОБРАБОТЧИК КНОПОК =====
 @dp.callback_query_handler(lambda call: True)
 async def process_callback(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -130,13 +126,11 @@ async def process_callback(call: types.CallbackQuery):
     await call.message.edit_text("⏳ Конвертирую файл, пожалуйста, подождите...")
 
     try:
-        # --- ФОТО В PDF ---
         if call.data == "photo_to_pdf":
             out_path = "converted_image.pdf"
             img = Image.open(input_path).convert("RGB")
             img.save(out_path, "PDF")
             
-        # --- DOCX В PDF ---
         elif call.data == "docx_to_pdf":
             out_path = "converted_docx.pdf"
             doc = Document(input_path)
@@ -145,7 +139,6 @@ async def process_callback(call: types.CallbackQuery):
             pdf.multi_cell(0, 10, text)
             pdf.output(out_path)
             
-        # --- DOCX В TXT ---
         elif call.data == "docx_to_txt":
             out_path = "converted_docx.txt"
             doc = Document(input_path)
@@ -153,7 +146,6 @@ async def process_callback(call: types.CallbackQuery):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(text)
 
-        # --- TXT В PDF ---
         elif call.data == "txt_to_pdf":
             out_path = "converted_txt.pdf"
             with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -162,7 +154,6 @@ async def process_callback(call: types.CallbackQuery):
             pdf.multi_cell(0, 10, text)
             pdf.output(out_path)
 
-        # --- TXT В DOCX ---
         elif call.data == "txt_to_docx":
             out_path = "converted_txt.docx"
             with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -171,7 +162,6 @@ async def process_callback(call: types.CallbackQuery):
             doc.add_paragraph(text)
             doc.save(out_path)
 
-        # --- PDF В TXT ---
         elif call.data == "pdf_to_txt":
             out_path = "extracted_text.txt"
             reader = PdfReader(input_path)
@@ -181,7 +171,6 @@ async def process_callback(call: types.CallbackQuery):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(text if text.strip() else "Не удалось извлечь текст из PDF.")
 
-        # --- PDF В DOCX ---
         elif call.data == "pdf_to_docx":
             out_path = "converted_pdf.docx"
             reader = PdfReader(input_path)
@@ -191,23 +180,20 @@ async def process_callback(call: types.CallbackQuery):
                 doc.add_paragraph(text)
             doc.save(out_path)
 
-        # Отправка готового файла пользователю
         with open(out_path, "rb") as f:
             await call.message.reply_document(f, caption="✨ Результат конвертации:")
             
-        await call.message.delete() # Удаляем промежуточное сообщение "Конвертирую..."
+        await call.message.delete()
         safe_remove(out_path)
 
     except Exception as e:
         logging.error(f"Ошибка при конвертации: {e}")
-        await call.message.edit_text("❌ Произошла ошибка при обработке файла. Убедитесь, что файл не поврежден.")
+        await call.message.edit_text("❌ Произошла ошибка при обработке файла.")
 
     finally:
-        # Очищаем исходные файлы
         safe_remove(input_path)
         if user_id in user_files:
             del user_files[user_id]
 
-# ===== ЗАПУСК =====
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
