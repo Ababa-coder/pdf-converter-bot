@@ -110,8 +110,8 @@ async def process_callback(call: types.CallbackQuery):
             
             # Запускаем оригинальную утилиту LibreOffice
             cmd = [
-                "libreoffice", "--headless", "--convert-to", "pdf", 
-                input_path, "--outdir", "."
+            "libreoffice", "--headless", "--convert-to", "pdf", 
+            input_path, "--outdir", "."
             ]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             
