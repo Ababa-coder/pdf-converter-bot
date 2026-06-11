@@ -16,5 +16,6 @@ COPY . /app
 # УСТАНАВЛИВАЕМ БИБЛИОТЕКИ PYTHON
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ПРИНУДИТЕЛЬНЫЙ ПРОБРОС ПЕРЕМЕННЫХ И ЗАПУСК ЧЕРЕЗ SHELL-ОБОЛОЧКУ
-CMD ["/bin/sh", "-c", "BOT_TOKEN=$BOT_TOKEN exec python main.py"]
+# СТАНДАРТНАЯ СИСТЕМНАЯ КОМАНДА ЗАПУСКА
+CMD ["python", "main.py"]
+
