@@ -5,7 +5,7 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from docx import Document
 from PIL import Image
-from fpdf import FPDF
+from fpdf2 import FPDF
 from pypdf import PdfReader
 
 # ===== НАСТРОЙКА ТОКЕНА =====
