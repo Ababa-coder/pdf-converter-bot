@@ -2,117 +2,212 @@ import logging
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from docx import Document
 from PIL import Image
 from fpdf import FPDF
+from pypdf import PdfReader
 
-# ===== TOKEN (Railway Variables) =====
+# ===== НАСТРОЙКА ТОКЕНА =====
 TOKEN = os.getenv("BOT_TOKEN")
-
 if not TOKEN:
     raise Exception("BOT_TOKEN is not set in environment variables")
 
-# ===== BOT =====
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
-
 logging.basicConfig(level=logging.INFO)
+
+# Хранилище для путей файлов, чтобы знать, что конвертировать после нажатия кнопки
+# В продакшене лучше использовать БД или FSM, но для простоты используем словарь
+user_files = {}
 
 # Функция для создания PDF с поддержкой русского языка
 def create_base_pdf():
     pdf = FPDF()
     pdf.add_page()
-    # Регистрируем шрифт DejaVuSans, который корректно отображает кириллицу
-    # Файл DejaVuSans.ttf должен лежать в корне вашего репозитория на GitHub
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
     pdf.set_font("DejaVu", size=12)
     return pdf
 
-# ===== TEXT -> PDF =====
-@dp.message_handler(commands=['text'])
-async def text_to_pdf(message: types.Message):
-    text = message.get_args()
-    
-    if not text:
-        await message.reply("Используй: /text твой текст")
-        return
+# Стирание временного файла
+def safe_remove(filepath):
+    if filepath and os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logging.error(f"Ошибка удаления файла {filepath}: {e}")
 
-    pdf = create_base_pdf()
-    pdf.multi_cell(0, 10, text)
-    
-    file_name = "text.pdf"
-    pdf.output(file_name)
-    
-    with open(file_name, "rb") as pdf_file:
-        await message.reply_document(pdf_file)
-
-# ===== DOCX -> PDF =====
-@dp.message_handler(content_types=types.ContentType.DOCUMENT)
-async def docx_to_pdf(message: types.Message):
-    doc = message.document
-    
-    if not doc.file_name.endswith(".docx"):
-        await message.reply("Отправь .docx файл")
-        return
-
-    # Скачивание файла во временную папку
-    file_info = await bot.get_file(doc.file_id)
-    downloaded_file = await bot.download_file(file_info.file_path)
-    
-    temp_docx = "temp.docx"
-    with open(temp_docx, "wb") as f:
-        f.write(downloaded_file.read())
-        
-    document = Document(temp_docx)
-    text = "\n".join([p.text for p in document.paragraphs])
-    
-    pdf = create_base_pdf()
-    pdf.multi_cell(0, 10, text)
-    
-    file_name = "docx.pdf"
-    pdf.output(file_name)
-    
-    with open(file_name, "rb") as pdf_file:
-        await message.reply_document(pdf_file)
-        
-    # Чистка временных файлов
-    if os.path.exists(temp_docx):
-        os.remove(temp_docx)
-
-# ===== IMAGE -> PDF =====
-@dp.message_handler(content_types=types.ContentType.PHOTO)
-async def image_to_pdf(message: types.Message):
-    photo = message.photo[-1]
-    
-    file_info = await bot.get_file(photo.file_id)
-    downloaded_file = await bot.download_file(file_info.file_path)
-    
-    temp_img = "temp_image.jpg"
-    with open(temp_img, "wb") as f:
-        f.write(downloaded_file.read())
-        
-    img = Image.open(temp_img).convert("RGB")
-    
-    file_name = "image.pdf"
-    img.save(file_name, "PDF")
-    
-    with open(file_name, "rb") as pdf_file:
-        await message.reply_document(pdf_file)
-        
-    # Чистка временных файлов
-    if os.path.exists(temp_img):
-        os.remove(temp_img)
-
-# ===== START =====
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
+# ===== МЕНЮ СТАРТА =====
+@dp.message_handler(commands=['start', 'help'])
+async def start_command(message: types.Message):
     await message.reply(
-        "Привет! Я PDF конвертер.\n\n"
-        "📄 /text текст -> PDF\n"
-        "📸 отправь фото -> PDF\n"
-        "📝 отправь DOCX -> PDF"
+        "👋 **Привет! Я универсальный медиа-конвертер.**\n\n"
+        "Просто отправь мне любой поддерживаемый файл или фото, "
+        "и я предложу доступные варианты конвертации с помощью удобных кнопок!",
+        parse_mode="Markdown"
     )
 
-# ===== RUN =====
+# ===== ОБРАБОТКА ИЗОБРАЖЕНИЙ =====
+@dp.message_handler(content_types=types.ContentType.PHOTO)
+async def handle_photo(message: types.Message):
+    photo = message.photo[-1]
+    file_info = await bot.get_file(photo.file_id)
+    downloaded = await bot.download_file(file_info.file_path)
+    
+    input_path = f"img_{message.from_user.id}_{photo.file_id}.jpg"
+    with open(input_path, "wb") as f:
+        f.write(downloaded.read())
+        
+    user_files[message.from_user.id] = {"path": input_path, "type": "photo"}
+    
+    # Кнопки для фото
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton("🖼️ Конвертировать в PDF", callback_data="photo_to_pdf"),
+        InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")
+    )
+    await message.reply("Изображение получено. Выберите действие:", reply_markup=keyboard)
+
+# ===== ОБРАБОТКА ДОКУМЕНТОВ =====
+@dp.message_handler(content_types=types.ContentType.DOCUMENT)
+async def handle_document(message: types.Message):
+    doc = message.document
+    file_name = doc.file_name.lower()
+    
+    file_info = await bot.get_file(doc.file_id)
+    downloaded = await bot.download_file(file_info.file_path)
+    
+    input_path = f"doc_{message.from_user.id}_{doc.file_id}_{doc.file_name}"
+    with open(input_path, "wb") as f:
+        f.write(downloaded.read())
+        
+    user_files[message.from_user.id] = {"path": input_path, "type": "doc", "orig_name": doc.file_name}
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    
+    if file_name.endswith(".docx"):
+        keyboard.add(
+            InlineKeyboardButton("📄 DOCX ➡️ PDF", callback_data="docx_to_pdf"),
+            InlineKeyboardButton("📝 DOCX ➡️ TXT (Текст)", callback_data="docx_to_txt")
+        )
+    elif file_name.endswith(".pdf"):
+        keyboard.add(
+            InlineKeyboardButton("📝 PDF ➡️ TXT (Извлечь текст)", callback_data="pdf_to_txt"),
+            InlineKeyboardButton("✍️ PDF ➡️ DOCX (В документ)", callback_data="pdf_to_docx")
+        )
+    elif file_name.endswith(".txt"):
+        keyboard.add(
+            InlineKeyboardButton("📄 TXT ➡️ PDF", callback_data="txt_to_pdf"),
+            InlineKeyboardButton("✍️ TXT ➡️ DOCX", callback_data="txt_to_docx")
+        )
+    else:
+        await message.reply("Извините, этот формат документов пока не поддерживается.")
+        safe_remove(input_path)
+        return
+
+    keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"))
+    await message.reply(f"Файл `{doc.file_name}` загружен. Что нужно сделать?", reply_markup=keyboard, parse_mode="Markdown")
+
+# ===== ОБРАБОТЧИК НАЖАТИЙ НА КНОПКИ (CALLBACK) =====
+@dp.callback_query_handler(lambda call: True)
+async def process_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    
+    if call.data == "cancel_action":
+        if user_id in user_files:
+            safe_remove(user_files[user_id]["path"])
+            del user_files[user_id]
+        await call.message.edit_text("Действие отменено.")
+        return
+
+    if user_id not in user_files:
+        await call.answer("Файл устарел или не найден. Отправьте его заново.", show_alert=True)
+        await call.message.delete()
+        return
+
+    file_data = user_files[user_id]
+    input_path = file_data["path"]
+    
+    await call.message.edit_text("⏳ Конвертирую файл, пожалуйста, подождите...")
+
+    try:
+        # --- ФОТО В PDF ---
+        if call.data == "photo_to_pdf":
+            out_path = "converted_image.pdf"
+            img = Image.open(input_path).convert("RGB")
+            img.save(out_path, "PDF")
+            
+        # --- DOCX В PDF ---
+        elif call.data == "docx_to_pdf":
+            out_path = "converted_docx.pdf"
+            doc = Document(input_path)
+            text = "\n".join([p.text for p in doc.paragraphs])
+            pdf = create_base_pdf()
+            pdf.multi_cell(0, 10, text)
+            pdf.output(out_path)
+            
+        # --- DOCX В TXT ---
+        elif call.data == "docx_to_txt":
+            out_path = "converted_docx.txt"
+            doc = Document(input_path)
+            text = "\n".join([p.text for p in doc.paragraphs])
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(text)
+
+        # --- TXT В PDF ---
+        elif call.data == "txt_to_pdf":
+            out_path = "converted_txt.pdf"
+            with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+            pdf = create_base_pdf()
+            pdf.multi_cell(0, 10, text)
+            pdf.output(out_path)
+
+        # --- TXT В DOCX ---
+        elif call.data == "txt_to_docx":
+            out_path = "converted_txt.docx"
+            with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+            doc = Document()
+            doc.add_paragraph(text)
+            doc.save(out_path)
+
+        # --- PDF В TXT ---
+        elif call.data == "pdf_to_txt":
+            out_path = "extracted_text.txt"
+            reader = PdfReader(input_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(text if text.strip() else "Не удалось извлечь текст из PDF.")
+
+        # --- PDF В DOCX ---
+        elif call.data == "pdf_to_docx":
+            out_path = "converted_pdf.docx"
+            reader = PdfReader(input_path)
+            doc = Document()
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                doc.add_paragraph(text)
+            doc.save(out_path)
+
+        # Отправка готового файла пользователю
+        with open(out_path, "rb") as f:
+            await call.message.reply_document(f, caption="✨ Результат конвертации:")
+            
+        await call.message.delete() # Удаляем промежуточное сообщение "Конвертирую..."
+        safe_remove(out_path)
+
+    except Exception as e:
+        logging.error(f"Ошибка при конвертации: {e}")
+        await call.message.edit_text("❌ Произошла ошибка при обработке файла. Убедитесь, что файл не поврежден.")
+
+    finally:
+        # Очищаем исходные файлы
+        safe_remove(input_path)
+        if user_id in user_files:
+            del user_files[user_id]
+
+# ===== ЗАПУСК =====
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
