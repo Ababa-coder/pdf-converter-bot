@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
 
 # СОЗДАЕМ РАБОЧУЮ ПАПКУ И КОПИРУЕМ ПРОЕКТ
 WORKDIR /app
+ARG BOT_TOKEN
+ENV BOT_TOKEN=$BOT_TOKEN
 COPY . /app
 
 # УСТАНАВЛИВАЕМ БИБЛИОТЕКИ PYTHON
